@@ -1,0 +1,67 @@
+# Installs a CA cert, registers CoreDNS as first nameserver and reloads CRI-O afterwards on each node.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodehack-daemonset
+spec:
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      run-once-daemonset: nodehack-daemonset
+  template:
+    metadata:
+      labels:
+        run-once-daemonset: nodehack-daemonset
+    spec:
+      hostPID: true
+      containers:
+      - name: nodehack
+        image: mgoltzsche/nodehack:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - setca
+        - setdns
+        - reloadcrio
+        - setready
+        - sleepinfinity
+        securityContext:
+          privileged: true
+        readinessProbe:
+          exec:
+            command:
+              - /bin/cat
+              - /tmp/ready
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: "10m"
+            memory: "16Mi"
+          limits:
+            cpu: "300m"
+            memory: "64Mi"
+        env:
+        - name: CERT_NAME
+          value: selfsigned-ca
+        - name: CERT_FILE
+          value: /ca-cert/ca.crt
+        - name: NAMESERVER
+          # Use static CoreDNS IP as first nameserver
+          value: 10.96.0.10
+        - name: DEBUG
+          value: x
+        volumeMounts:
+        - name: ca-cert
+          mountPath: /ca-cert
+        - name: hostfs
+          mountPath: /host
+          readOnly: false
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: ca-cert
+        secret:
+          secretName: selfsigned-ca
+      - name: hostfs
+        hostPath:
+          path: /

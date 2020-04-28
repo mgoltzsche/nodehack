@@ -1,0 +1,100 @@
+#!/bin/sh
+
+# This script can
+# * install a CA certificate (setca)
+# * configure a DNS nameserver temporarily (setdns)
+# * reload CRI-O (reloadcrio)
+
+[ $# -gt 1 ] || (echo "Usage: $0 HOSTPATH setca|setdns|reloadcrio|setready|sleepinfinity..." >&2; false) || exit 1
+HOST_PATH="$1"
+shift
+[ -d "$HOST_PATH" ] || (echo "HOSTPATH $HOST_PATH does not exist or is not a directory" >&2; false) || exit 1
+
+set -e${DEBUG}o pipefail
+
+
+copyCaCert() {
+	[ "$CERT_FILE" ] || (echo CERT_FILE env var not specified >&2; false) || exit 1
+	[ "$CERT_NAME" ] || (echo CERT_NAME env var not specified >&2; false) || exit 1
+	CERT="$(cat $CERT_FILE)"
+	[ "$CERT" ] || (echo $CERT_FILE is empty >&2; false) || exit 1
+	CERT_HASH="$(echo "$CERT" | md5sum - | cut -d' ' -f1)"
+	CERT_DIR=$1
+	mkdir -p "$CERT_DIR"
+	CERT_DEST=$CERT_DIR/nodehack-ca-${CERT_NAME}-${CERT_HASH}.crt
+	if [ ! -f "$CERT_DEST" ]; then
+		echo "$CERT" > $CERT_DIR/.tmp-nodehack-ca-cert-$CERT_NAME
+		mv $CERT_DIR/.tmp-nodehack-ca-cert-$CERT_NAME $CERT_DEST
+		# TODO: remove old certificates
+		#for OLDCERT in $(ls $CERT_DIR | grep -E "^nodehack-ca-${CERT_NAME}-"'[0-9a-f]+\.crt' | grep -v $CERT_NAME); do
+		#	rm -f $CERT_DIR/$OLDCERT
+		#done
+	fi
+}
+
+# ARGS: NAME
+findHostBin() {
+	(cd "$HOST_PATH" && find "bin/$1" "sbin/$1" "usr/bin/$1" "usr/sbin/$1" 2>/dev/null | head -1) || true
+}
+
+reloadcrio() {
+	CRIO_PID="$(ps aux | grep -Em1 ' ([a-z/]+/)?crio( |$)' | grep -Eo '^\s*[0-9]+' | grep -Eo '[0-9]+')" || true
+	CRIO_RELOAD_SIGNAL="${CRIO_RELOAD_SIGNAL:-1}"
+	if [ "$CRIO_PID" ]; then
+		# Force CRI-O restart if crio process found to pick up new CA cert
+		kill -"$CRIO_RELOAD_SIGNAL" "$CRIO_PID" || (echo ERROR: failed to reload crio >&2; false)
+		echo CRI-O reloaded
+	else
+		echo 'WARNING: Could not find crio process.' >&2
+		echo '  You may need to restart the container engine on each node' >&2
+		echo '  manually to ensure the new CA certificate is registered.' >&2
+	fi
+}
+
+setca() {
+	UPDATE_CA_CERTIFICATES="$(findHostBin update-ca-certificates)"
+	UPDATE_CA_TRUST="$(findHostBin update-ca-trust)"
+	if [ "$UPDATE_CA_TRUST" ] && [ -d $HOST_PATH/etc/pki/ca-trust/source/anchors ]; then
+		# required on RHEL/fedora/centos host:
+		copyCaCert $HOST_PATH/etc/pki/ca-trust/source/anchors
+		chroot $HOST_PATH /$UPDATE_CA_TRUST enable
+	elif [ "$UPDATE_CA_CERTIFICATES" ] && [ -d $HOST_PATH/usr/local/share/ca-certificates ]; then
+		copyCaCert $HOST_PATH/usr/local/share/ca-certificates
+		chroot $HOST_PATH /$UPDATE_CA_CERTIFICATES
+	else
+		echo "WARNING: Installing CA using container's config since host's CA management not detected." >&2
+		copyCaCert $HOST_PATH/usr/local/share/ca-certificates
+		rm -rf /etc/ssl/certs /usr/local/share/ca-certificates
+		mkdir -p $HOST_PATH/etc/ssl/certs $HOST_PATH/usr/local/share/ca-certificates
+		ln -s $HOST_PATH/etc/ssl/certs /etc/ssl/certs
+		ln -s $HOST_PATH/usr/local/share/ca-certificates /usr/local/share/ca-certificates
+		update-ca-certificates
+	fi
+	echo CA certificate installed
+}
+
+setdns() {
+	[ "$NAMESERVER" ] || (echo NAMESERVER env var not specified >&2; false) || exit 1
+	if ! cat $HOST_PATH/etc/resolv.conf | grep -q "nameserver $NAMESERVER"; then
+		RESOLVCONF="$(echo "nameserver $NAMESERVER" && cat $HOST_PATH/etc/resolv.conf)"
+		echo "$RESOLVCONF" > $HOST_PATH/etc/.tmp.resolv.conf
+		mv $HOST_PATH/etc/.tmp.resolv.conf $HOST_PATH/etc/resolv.conf ||
+		# in case the host is a container: update resolv.conf insecurely
+		echo "$RESOLVCONF" > $HOST_PATH/etc/resolv.conf
+		rm -f $HOST_PATH/etc/.tmp.resolv.conf
+	fi
+	echo Nameserver $NAMESERVER configured
+}
+
+setready() {
+	touch /tmp/ready
+}
+
+sleepinfinity() {
+	sleep infinity
+}
+
+
+for TARGET in $@; do
+	$TARGET
+done
