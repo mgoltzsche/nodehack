@@ -22,7 +22,7 @@ spec:
         args:
         - setca
         - setdns
-        - reloadcrio
+        - restartcrio
         - setready
         - sleepinfinity
         securityContext:
@@ -57,7 +57,7 @@ spec:
         - name: hostfs
           mountPath: /host
           readOnly: false
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: 5
       volumes:
       - name: ca-cert
         secret:

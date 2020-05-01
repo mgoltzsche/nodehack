@@ -53,6 +53,11 @@ reloadcrio() {
 	fi
 }
 
+restartcrio() {
+	chroot $HOST_PATH systemctl restart crio
+	echo CRI-O restarted
+}
+
 setcarh() {
 	# on RHEL/fedora/centos host
 	copyCaCert $HOST_PATH/etc/pki/ca-trust/source/anchors
