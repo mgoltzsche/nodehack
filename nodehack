@@ -4,8 +4,9 @@
 # * install a CA certificate (setca)
 # * configure a DNS nameserver temporarily (setdns)
 # * reload CRI-O (reloadcrio)
+# * restart CRI-O (restartcrio)
 
-[ $# -gt 1 ] || (echo "Usage: $0 HOSTPATH setca|setdns|reloadcrio|setready|sleepinfinity..." >&2; false) || exit 1
+[ $# -gt 1 ] || (echo "Usage: $0 HOSTPATH setca|setdns|reloadcrio|restartcrio|setready|sleepinfinity..." >&2; false) || exit 1
 HOST_PATH="$1"
 shift
 [ -d "$HOST_PATH" ] || (echo "HOSTPATH $HOST_PATH does not exist or is not a directory" >&2; false) || exit 1
